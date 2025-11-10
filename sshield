@@ -1,0 +1,657 @@
+#!/bin/bash
+# SSHield - A Linux Server Security Tool
+
+# --- Helper Functions ---
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# --- Service Management Functions ---
+
+# Function to check service status
+check_service_status() {
+    SERVICE_NAME=$1
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        STATUS="active"
+    else
+        STATUS="inactive"
+    fi
+    if systemctl is-enabled --quiet "$SERVICE_NAME"; then
+        ENABLED="enabled"
+    else
+        ENABLED="disabled"
+    fi
+    whiptail --title "Service Status" --msgbox "$SERVICE_NAME is $STATUS and $ENABLED." 8 78
+}
+
+# Function to enable a service
+enable_service() {
+    SERVICE_NAME=$1
+    if systemctl enable "$SERVICE_NAME" && systemctl start "$SERVICE_NAME"; then
+        whiptail --title "Success" --msgbox "$SERVICE_NAME has been enabled and started." 8 78
+    else
+        whiptail --title "Error" --msgbox "Failed to enable or start $SERVICE_NAME." 8 78
+    fi
+}
+
+# Function to disable a service
+disable_service() {
+    SERVICE_NAME=$1
+    if systemctl disable "$SERVICE_NAME" && systemctl stop "$SERVICE_NAME"; then
+        whiptail --title "Success" --msgbox "$SERVICE_NAME has been disabled and stopped." 8 78
+    else
+        whiptail --title "Error" --msgbox "Failed to disable or stop $SERVICE_NAME." 8 78
+    fi
+}
+
+# Function to manage a single service
+manage_single_service() {
+    SERVICE_NAME=$1
+    ACTION_CHOICE=$(whiptail --title "Manage $SERVICE_NAME" --menu "Choose an action:" 15 60 4 \
+        "1" "Enable" \
+        "2" "Disable" \
+        "3" "Check Status" \
+        "4" "Back" 3>&1 1>&2 2>&3)
+
+    case $ACTION_CHOICE in
+        1)
+            enable_service "$SERVICE_NAME"
+            ;;
+        2)
+            disable_service "$SERVICE_NAME"
+            ;;
+        3)
+            check_service_status "$SERVICE_NAME"
+            ;;
+        4)
+            return
+            ;;
+    esac
+}
+
+# Function to display the service management menu
+service_menu() {
+    while true; do
+        SERVICE_CHOICE=$(whiptail --title "Service Management" --menu "Choose a service to manage:" 15 60 5 \
+            "1" "SSH (sshd)" \
+            "2" "FTP (vsftpd)" \
+            "3" "Telnet (telnet.socket)" \
+            "4" "Back to Main Menu" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            return
+        fi
+
+        case $SERVICE_CHOICE in
+            1)
+                manage_single_service "sshd"
+                ;;
+            2)
+                manage_single_service "vsftpd"
+                ;;
+            3)
+                manage_single_service "telnet.socket"
+                ;;
+            4)
+                return
+                ;;
+        esac
+    done
+}
+
+# --- Port Management Functions ---
+
+# Function to check if a port is in use
+is_port_in_use() {
+    PORT=$1
+    if ss -tuln | grep -q ":$PORT "; then
+        return 0 # Port is in use
+    else
+        return 1 # Port is not in use
+    fi
+}
+
+# Function to change the SSH port
+change_ssh_port() {
+    CURRENT_PORT=$(grep -i "^port" /etc/ssh/sshd_config | awk '{print $2}')
+    NEW_PORT=$(whiptail --inputbox "Enter the new SSH port:" 8 78 "$CURRENT_PORT" 3>&1 1>&2 2>&3)
+
+    exit_status=$?
+    if [ $exit_status -ne 0 ]; then
+        return
+    fi
+
+    # Validate the new port
+    if ! [[ "$NEW_PORT" =~ ^[0-9]+$ ]] || [ "$NEW_PORT" -lt 1 ] || [ "$NEW_PORT" -gt 65535 ]; then
+        whiptail --title "Error" --msgbox "Invalid port number. Please enter a number between 1 and 65535." 8 78
+        return
+    fi
+
+    if is_port_in_use "$NEW_PORT"; then
+        whiptail --title "Error" --msgbox "Port $NEW_PORT is already in use." 8 78
+        return
+    fi
+
+    if [ "$NEW_PORT" -lt 1024 ]; then
+        if ! whiptail --yesno "You have chosen a privileged port ($NEW_PORT). Are you sure you want to continue?" 8 78; then
+            return
+        fi
+    fi
+
+    # Backup the config file and change the port
+    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+    sed -i "s/^Port .*/Port $NEW_PORT/" /etc/ssh/sshd_config
+    if ! grep -q "^Port" /etc/ssh/sshd_config; then
+        echo "Port $NEW_PORT" >> /etc/ssh/sshd_config
+    fi
+
+    # Restart SSH service
+    if systemctl restart sshd; then
+        whiptail --title "Success" --msgbox "SSH port has been changed to $NEW_PORT. Please remember to allow the new port in your firewall." 10 78
+    else
+        whiptail --title "Error" --msgbox "Failed to restart SSH service. Please check the configuration." 8 78
+        mv /etc/ssh/sshd_config.bak /etc/ssh/sshd_config
+    fi
+}
+
+# Function to display the port management menu
+port_menu() {
+    while true; do
+        PORT_CHOICE=$(whiptail --title "Port Management" --menu "Choose a service to manage its port:" 15 60 4 \
+            "1" "Change SSH Port" \
+            "2" "Change FTP Port (Not implemented)" \
+            "3" "Change Telnet Port (Not implemented)" \
+            "4" "Back to Main Menu" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            return
+        fi
+
+        case $PORT_CHOICE in
+            1)
+                change_ssh_port
+                ;;
+            2)
+                whiptail --title "Not Implemented" --msgbox "This feature is not yet implemented." 8 78
+                ;;
+            3)
+                whiptail --title "Not Implemented" --msgbox "This feature is not yet implemented." 8 78
+                ;;
+            4)
+                return
+                ;;
+        esac
+    done
+}
+
+
+# --- IP Restriction Functions ---
+
+# Function to check if ufw is installed and active
+check_ufw() {
+    if ! command_exists ufw; then
+        if whiptail --yesno "ufw is not installed. Would you like to install it?" 8 78; then
+            if [ -f /etc/debian_version ]; then
+                apt-get update && apt-get install -y ufw
+            elif [ -f /etc/redhat-release ]; then
+                yum install -y ufw
+            else
+                whiptail --title "Error" --msgbox "Unsupported distribution for automatic installation." 8 78
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+
+    if ! ufw status | grep -q "Status: active"; then
+        if whiptail --yesno "ufw is not active. Would you like to enable it?" 8 78; then
+            ufw enable
+        else
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Function to allow an IP for a service
+allow_ip() {
+    SERVICE_NAME=$1
+    IP=$(whiptail --inputbox "Enter the IP address to allow for $SERVICE_NAME:" 8 78 3>&1 1>&2 2>&3)
+    exit_status=$?
+    if [ $exit_status -ne 0 ]; then
+        return
+    fi
+    ufw allow from "$IP" to any app "$SERVICE_NAME"
+    whiptail --title "Success" --msgbox "IP $IP has been allowed for $SERVICE_NAME." 8 78
+}
+
+# Function to deny an IP for a service
+deny_ip() {
+    SERVICE_NAME=$1
+    IP=$(whiptail --inputbox "Enter the IP address to deny for $SERVICE_NAME:" 8 78 3>&1 1>&2 2>&3)
+    exit_status=$?
+    if [ $exit_status -ne 0 ]; then
+        return
+    fi
+    ufw deny from "$IP" to any app "$SERVICE_NAME"
+    whiptail --title "Success" --msgbox "IP $IP has been denied for $SERVICE_NAME." 8 78
+}
+
+# Function to view current restrictions
+view_restrictions() {
+    whiptail --title "Current Restrictions" --textbox /dev/stdin 20 78 <<< "$(ufw status numbered)"
+}
+
+# Function to display the IP restriction menu
+ip_restriction_menu() {
+    if ! check_ufw; then
+        return
+    fi
+
+    while true; do
+        RESTRICTION_CHOICE=$(whiptail --title "IP Restriction" --menu "Choose an action:" 15 60 5 \
+            "1" "Allow IP for SSH" \
+            "2" "Deny IP for SSH" \
+            "3" "View Current Restrictions" \
+            "4" "Back to Main Menu" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            return
+        fi
+
+        case $RESTRICTION_CHOICE in
+            1)
+                allow_ip "OpenSSH"
+                ;;
+            2)
+                deny_ip "OpenSSH"
+                ;;
+            3)
+                view_restrictions
+                ;;
+            4)
+                return
+                ;;
+        esac
+    done
+}
+
+# --- fail2ban Functions ---
+
+# Function to check if fail2ban is installed
+check_fail2ban() {
+    if ! command_exists fail2ban-client; then
+        if whiptail --yesno "fail2ban is not installed. Would you like to install it?" 8 78; then
+            if [ -f /etc/debian_version ]; then
+                apt-get update && apt-get install -y fail2ban
+            elif [ -f /etc/redhat-release ]; then
+                yum install -y fail2ban
+            else
+                whiptail --title "Error" --msgbox "Unsupported distribution for automatic installation." 8 78
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Function to configure fail2ban for SSH
+configure_fail2ban_ssh() {
+    if [ ! -f /etc/fail2ban/jail.local ]; then
+        cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+    fi
+    # A simple configuration to enable sshd jail
+    if ! grep -q "\[sshd\]" /etc/fail2ban/jail.local; then
+        echo -e "\n[sshd]\nenabled = true" >> /etc/fail2ban/jail.local
+    else
+        sed -i "/\[sshd\]/a enabled = true" /etc/fail2ban/jail.local
+    fi
+
+    if systemctl restart fail2ban; then
+        whiptail --title "Success" --msgbox "fail2ban has been configured for SSH." 8 78
+    else
+        whiptail --title "Error" --msgbox "Failed to restart fail2ban." 8 78
+    fi
+}
+
+# Function to view fail2ban status
+view_fail2ban_status() {
+    whiptail --title "fail2ban Status" --textbox /dev/stdin 20 78 <<< "$(fail2ban-client status sshd)"
+}
+
+# Function to manage fail2ban service
+manage_fail2ban_service() {
+    ACTION=$(whiptail --title "Manage fail2ban Service" --menu "Choose an action:" 15 60 4 \
+        "1" "Start" \
+        "2" "Stop" \
+        "3" "Restart" \
+        "4" "Back" 3>&1 1>&2 2>&3)
+
+    case $ACTION in
+        1)
+            systemctl start fail2ban
+            ;;
+        2)
+            systemctl stop fail2ban
+            ;;
+        3)
+            systemctl restart fail2ban
+            ;;
+        4)
+            return
+            ;;
+    esac
+}
+
+
+# Function to display the fail2ban menu
+fail2ban_menu() {
+    if ! check_fail2ban; then
+        return
+    fi
+
+    while true; do
+        F2B_CHOICE=$(whiptail --title "fail2ban Management" --menu "Choose an action:" 15 60 5 \
+            "1" "Configure for SSH" \
+            "2" "View SSH Jail Status" \
+            "3" "Manage fail2ban Service" \
+            "4" "Back to Main Menu" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            return
+        fi
+
+        case $F2B_CHOICE in
+            1)
+                configure_fail2ban_ssh
+                ;;
+            2)
+                view_fail2ban_status
+                ;;
+            3)
+                manage_fail2ban_service
+                ;;
+            4)
+                return
+                ;;
+        esac
+    done
+}
+
+# --- Port Knocking Functions ---
+
+# Function to check if knockd is installed
+check_knockd() {
+    if ! command_exists knockd; then
+        if whiptail --yesno "knockd is not installed. Would you like to install it?" 8 78; then
+            if [ -f /etc/debian_version ]; then
+                apt-get update && apt-get install -y knockd
+            elif [ -f /etc/redhat-release ]; then
+                yum install -y knockd
+            else
+                whiptail --title "Error" --msgbox "Unsupported distribution for automatic installation." 8 78
+                return 1
+            fi
+        else
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Function to enable port knocking for SSH
+enable_port_knocking() {
+    if ! check_ufw; then
+        return
+    fi
+
+    SSH_PORT=$(grep -i "^port" /etc/ssh/sshd_config | awk '{print $2}')
+    KNOCK_SEQUENCE=$(whiptail --inputbox "Enter the port sequence for knocking (e.g., 7000,8000,9000):" 8 78 "7000,8000,9000" 3>&1 1>&2 2>&3)
+    exit_status=$?
+    if [ $exit_status -ne 0 ]; then
+        return
+    fi
+
+    CLOSE_SEQUENCE=$(echo "$KNOCK_SEQUENCE" | tr "," "\n" | tac | tr "\n" "," | sed 's/,$//')
+
+    # Configure knockd
+    echo "[options]
+    UseSyslog
+
+[openSSH]
+    sequence    = $KNOCK_SEQUENCE
+    seq_timeout = 15
+    command     = /sbin/ufw allow $SSH_PORT
+    tcpflags    = syn
+
+[closeSSH]
+    sequence    = $CLOSE_SEQUENCE
+    seq_timeout = 15
+    command     = /sbin/ufw delete allow $SSH_PORT
+    tcpflags    = syn" > /etc/knockd.conf
+
+    # Enable knockd
+    if [ -f /etc/default/knockd ]; then
+        sed -i 's/START_KNOCKD=0/START_KNOCKD=1/' /etc/default/knockd
+    fi
+    if [ -f /etc/sysconfig/knockd ]; then
+        sed -i 's/OPTIONS=.*/OPTIONS="-i eth0"/' /etc/sysconfig/knockd
+    fi
+    systemctl restart knockd
+
+    # Block SSH port by default
+    ufw deny $SSH_PORT
+
+    whiptail --title "Success" --msgbox "Port knocking has been enabled for SSH on port $SSH_PORT with sequence $KNOCK_SEQUENCE." 10 78
+}
+
+# Function to disable port knocking
+disable_port_knocking() {
+    if [ -f /etc/default/knockd ]; then
+        sed -i 's/START_KNOCKD=1/START_KNOCKD=0/' /etc/default/knockd
+    fi
+    systemctl stop knockd
+    SSH_PORT=$(grep -i "^port" /etc/ssh/sshd_config | awk '{print $2}')
+    ufw allow $SSH_PORT
+    whiptail --title "Success" --msgbox "Port knocking has been disabled." 8 78
+}
+
+
+# Function to display the port knocking menu
+port_knocking_menu() {
+    if ! check_knockd; then
+        return
+    fi
+
+    while true; do
+        PK_CHOICE=$(whiptail --title "Port Knocking" --menu "Choose an action:" 15 60 3 \
+            "1" "Enable for SSH" \
+            "2" "Disable for SSH" \
+            "3" "Back to Main Menu" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            return
+        fi
+
+        case $PK_CHOICE in
+            1)
+                enable_port_knocking
+                ;;
+            2)
+                disable_port_knocking
+                ;;
+            3)
+                return
+                ;;
+        esac
+    done
+}
+
+# --- Logging and Reporting Functions ---
+
+# Function to configure webhook
+configure_webhook() {
+    WEBHOOK_URL=$(whiptail --inputbox "Enter the webhook URL for notifications:" 8 78 3>&1 1>&2 2>&3)
+    exit_status=$?
+    if [ $exit_status -ne 0 ]; then
+        return
+    fi
+
+    mkdir -p /etc/sshield
+    echo "WEBHOOK_URL=$WEBHOOK_URL" > /etc/sshield/config
+    whiptail --title "Success" --msgbox "Webhook URL has been configured." 8 78
+}
+
+# Function to enable SSH login notifications
+enable_ssh_notifications() {
+    if ! grep -q "sshield_notify.sh" /etc/pam.d/sshd; then
+        echo "session optional pam_exec.so /usr/local/bin/sshield_notify.sh" >> /etc/pam.d/sshd
+    fi
+    whiptail --title "Success" --msgbox "SSH login notifications have been enabled." 8 78
+}
+
+# Function to view failed login attempts
+view_failed_logins() {
+    LOG_FILE="/var/log/auth.log"
+    if [ -f /etc/redhat-release ]; then
+        LOG_FILE="/var/log/secure"
+    fi
+    FAILED_LOGINS=$(grep "Failed password" "$LOG_FILE" | awk '{print $(NF-3)}' | sort | uniq -c)
+    whiptail --title "Failed Login Attempts" --textbox /dev/stdin 20 78 <<< "$FAILED_LOGINS"
+}
+
+# Function to display the logging and reporting menu
+logging_menu() {
+    while true; do
+        LOG_CHOICE=$(whiptail --title "Logging & Reporting" --menu "Choose an action:" 15 60 4 \
+            "1" "Configure Webhook" \
+            "2" "Enable SSH Login Notifications" \
+            "3" "View Failed Login Attempts" \
+            "4" "Back to Main Menu" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            return
+        fi
+
+        case $LOG_CHOICE in
+            1)
+                configure_webhook
+                ;;
+            2)
+                enable_ssh_notifications
+                ;;
+            3)
+                view_failed_logins
+                ;;
+            4)
+                return
+                ;;
+        esac
+    done
+}
+
+# --- Security Summary Functions ---
+
+# Function to show daily summary
+show_daily_summary() {
+    SUMMARY=$(/usr/local/bin/sshield_summary.sh daily)
+    whiptail --title "Daily Security Summary" --textbox /dev/stdin 20 78 <<< "$SUMMARY"
+}
+
+# Function to show weekly summary
+show_weekly_summary() {
+    SUMMARY=$(/usr/local/bin/sshield_summary.sh weekly)
+    whiptail --title "Weekly Security Summary" --textbox /dev/stdin 20 78 <<< "$SUMMARY"
+}
+
+
+# Function to display the summary menu
+summary_menu() {
+    while true; do
+        SUMMARY_CHOICE=$(whiptail --title "Security Summaries" --menu "Choose a summary to view:" 15 60 3 \
+            "1" "Daily Summary" \
+            "2" "Weekly Summary" \
+            "3" "Back to Main Menu" 3>&1 1>&2 2>&3)
+
+        exit_status=$?
+        if [ $exit_status -ne 0 ]; then
+            return
+        fi
+
+        case $SUMMARY_CHOICE in
+            1)
+                show_daily_summary
+                ;;
+            2)
+                show_weekly_summary
+                ;;
+            3)
+                return
+                ;;
+        esac
+    done
+}
+
+
+# --- Main Menu ---
+
+# Function to display the main menu
+main_menu() {
+    CHOICE=$(whiptail --title "SSHield - Main Menu" --menu "Choose an option:" 15 60 8 \
+        "1" "Service Management" \
+        "2" "Port Management" \
+        "3" "IP Restriction" \
+        "4" "fail2ban Management" \
+        "5" "Port Knocking" \
+        "6" "Logging & Reporting" \
+        "7" "Security Summaries" \
+        "8" "Exit" 3>&1 1>&2 2>&3)
+
+    exit_status=$?
+    if [ $exit_status -ne 0 ]; then
+        exit 0
+    fi
+
+    case $CHOICE in
+        1)
+            service_menu
+            ;;
+        2)
+            port_menu
+            ;;
+        3)
+            ip_restriction_menu
+            ;;
+        4)
+            fail2ban_menu
+            ;;
+        5)
+            port_knocking_menu
+            ;;
+        6)
+            logging_menu
+            ;;
+        7)
+            summary_menu
+            ;;
+        8)
+            exit 0
+            ;;
+    esac
+}
+
+# --- Main loop ---
+while true; do
+    main_menu
+done
