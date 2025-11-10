@@ -8,6 +8,23 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# --- ASCII Art ---
+show_ascii_art() {
+    clear
+    cat << "EOF"
+   _____ _____ __  __ _____  _____ ______   _______ ______
+  / ____/ ____|  \/  |  __ \|_   _|  ____| |__   __|  ____|
+ | (___| (___ | \  / | |__) | | | | |__       | |  | |__
+  \___ \\___ \| |\/| |  ___/  | | |  __|      | |  |  __|
+  ____) |___) | |  | | |     _| |_| |____     | |  | |____
+ |_____/_____/|_|  |_|_|    |_____|______|    |_|  |______|
+
+A Linux Server Security Tool
+============================================================
+EOF
+}
+
+
 # --- Service Management Functions ---
 
 # Function to check service status
@@ -39,6 +56,11 @@ enable_service() {
 # Function to disable a service
 disable_service() {
     SERVICE_NAME=$1
+    if [[ "$SERVICE_NAME" == "sshd" && -n "$SSH_TTY" ]]; then
+        whiptail --title "Warning" --msgbox "You cannot disable the SSH service you are currently connected through." 8 78
+        return
+    fi
+
     if systemctl disable "$SERVICE_NAME" && systemctl stop "$SERVICE_NAME"; then
         whiptail --title "Success" --msgbox "$SERVICE_NAME has been disabled and stopped." 8 78
     else
@@ -116,11 +138,21 @@ is_port_in_use() {
 
 # Function to change the SSH port
 change_ssh_port() {
-    CURRENT_PORT=$(grep -i "^port" /etc/ssh/sshd_config | awk '{print $2}')
+    # Get current port, default to 22 if not explicitly set
+    CURRENT_PORT=$(grep -E "^Port " /etc/ssh/sshd_config | awk '{print $2}' | head -n 1)
+    if [ -z "$CURRENT_PORT" ]; then
+        CURRENT_PORT=22
+    fi
+
     NEW_PORT=$(whiptail --inputbox "Enter the new SSH port:" 8 78 "$CURRENT_PORT" 3>&1 1>&2 2>&3)
 
     exit_status=$?
-    if [ $exit_status -ne 0 ]; then
+    if [ $exit_status -ne 0 ] || [ -z "$NEW_PORT" ]; then
+        return
+    fi
+
+    if [ "$NEW_PORT" == "$CURRENT_PORT" ]; then
+        whiptail --title "Info" --msgbox "The new port is the same as the current port. No changes made." 8 78
         return
     fi
 
@@ -141,19 +173,37 @@ change_ssh_port() {
         fi
     fi
 
-    # Backup the config file and change the port
+    # Backup the config file
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-    sed -i "s/^Port .*/Port $NEW_PORT/" /etc/ssh/sshd_config
-    if ! grep -q "^Port" /etc/ssh/sshd_config; then
+
+    # Update firewall BEFORE restarting sshd
+    UFW_ACTIVE=false
+    if command_exists ufw && ufw status | grep -q "Status: active"; then
+        UFW_ACTIVE=true
+        ufw allow "$NEW_PORT"/tcp
+        ufw delete allow "$CURRENT_PORT"/tcp
+        whiptail --title "Info" --msgbox "Firewall rules updated to allow port $NEW_PORT and deny port $CURRENT_PORT." 8 78
+    fi
+
+    # Update sshd_config file
+    if grep -qE "^#?Port " /etc/ssh/sshd_config; then
+        sed -i -E "s/^#?Port .*/Port $NEW_PORT/" /etc/ssh/sshd_config
+    else
         echo "Port $NEW_PORT" >> /etc/ssh/sshd_config
     fi
 
+
     # Restart SSH service
     if systemctl restart sshd; then
-        whiptail --title "Success" --msgbox "SSH port has been changed to $NEW_PORT. Please remember to allow the new port in your firewall." 10 78
+        whiptail --title "Success" --msgbox "SSH port has been changed to $NEW_PORT." 10 78
     else
-        whiptail --title "Error" --msgbox "Failed to restart SSH service. Please check the configuration." 8 78
+        whiptail --title "Error" --msgbox "Failed to restart SSH service. Rolling back changes." 8 78
         mv /etc/ssh/sshd_config.bak /etc/ssh/sshd_config
+        # Roll back firewall changes
+        if [ "$UFW_ACTIVE" = true ]; then
+            ufw delete allow "$NEW_PORT"/tcp
+            ufw allow "$CURRENT_PORT"/tcp
+        fi
     fi
 }
 
@@ -251,6 +301,19 @@ view_restrictions() {
 ip_restriction_menu() {
     if ! check_ufw; then
         return
+    fi
+
+    # Check for existing allow rules for SSH
+    if ! ufw status | grep -q "OpenSSH.*ALLOW"; then
+        if whiptail --yesno "No explicit 'allow' rules for SSH found. To avoid being locked out, would you like to allow your current IP address?" 8 78; then
+            CURRENT_IP=$(echo $SSH_CLIENT | awk '{print $1}')
+            if [ -n "$CURRENT_IP" ]; then
+                ufw allow from "$CURRENT_IP" to any app "OpenSSH"
+                whiptail --title "Success" --msgbox "Your current IP ($CURRENT_IP) has been allowed for SSH." 8 78
+            else
+                whiptail --title "Warning" --msgbox "Could not determine your current IP address. Please add an allow rule manually." 8 78
+            fi
+        fi
     fi
 
     while true; do
@@ -608,6 +671,7 @@ summary_menu() {
 
 # Function to display the main menu
 main_menu() {
+    show_ascii_art
     CHOICE=$(whiptail --title "SSHield - Main Menu" --menu "Choose an option:" 15 60 8 \
         "1" "Service Management" \
         "2" "Port Management" \

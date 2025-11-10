@@ -1,5 +1,8 @@
 #!/bin/bash
-# SSHield Installer
+# SSHield Online Installer
+
+# --- Global Variables ---
+REPO_RAW_URL="https://raw.githubusercontent.com/jules-dot-ai/ops-sshield/main"
 
 # --- Helper Functions ---
 
@@ -34,14 +37,21 @@ else
     print_msg "Unsupported distribution. Please install the following dependencies manually: whiptail, ufw, fail2ban, knockd, curl"
 fi
 
-# Copy scripts to /usr/local/bin
-print_msg "Installing SSHield scripts..."
-install -m 755 sshield /usr/local/bin/sshield
-install -m 755 sshield_notify.sh /usr/local/bin/sshield_notify.sh
-install -m 755 sshield_summary.sh /usr/local/bin/sshield_summary.sh
+# Download and install scripts
+print_msg "Downloading and installing SSHield scripts..."
+curl -sSL "$REPO_RAW_URL/sshield" -o "/usr/local/bin/sshield"
+curl -sSL "$REPO_RAW_URL/sshield_notify.sh" -o "/usr/local/bin/sshield_notify.sh"
+curl -sSL "$REPO_RAW_URL/sshield_summary.sh" -o "/usr/local/bin/sshield_summary.sh"
+
+# Make scripts executable
+chmod +x /usr/local/bin/sshield
+chmod +x /usr/local/bin/sshield_notify.sh
+chmod +x /usr/local/bin/sshield_summary.sh
+
 
 # Set up cron jobs for summaries
 print_msg "Setting up cron jobs for security summaries..."
+(crontab -l 2>/dev/null | grep -v "sshield_summary.sh") | crontab -
 (crontab -l 2>/dev/null; echo "0 0 * * * /usr/local/bin/sshield_summary.sh daily > /var/log/sshield_daily.log") | crontab -
 (crontab -l 2>/dev/null; echo "0 0 * * 0 /usr/local/bin/sshield_summary.sh weekly > /var/log/sshield_weekly.log") | crontab -
 
