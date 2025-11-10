@@ -2,7 +2,7 @@
 # SSHield Online Installer
 
 # --- Global Variables ---
-REPO_RAW_URL="https://raw.githubusercontent.com/jules-dot-ai/ops-sshield/main"
+REPO_RAW_URL="https://raw.githubusercontent.com/dehnavi97/sshield/main"
 
 # --- Helper Functions ---
 
