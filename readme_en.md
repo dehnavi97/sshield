@@ -50,7 +50,16 @@ This will open a clean, intuitive CLI menu where you can access all of SSHield's
 - **Automatic Configuration**: SSHield handles the installation and configuration of `knockd` and sets up the necessary firewall rules.
 
 ### Logging & Reporting
-- **Webhook Notifications**: Configure a webhook URL to receive real-time notifications for every successful SSH login.
+- **Webhook Notifications**: Configure a webhook URL to receive real-time notifications for every successful SSH login. The notification is sent as a JSON payload with the following structure:
+  ```json
+  {
+    "hostname": "your-server-hostname",
+    "user": "the-user-logging-in",
+    "source_ip": "the-source-ip-address",
+    "timestamp": "YYYY-MM-DD HH:MM:SS",
+    "message": "Full notification message"
+  }
+  ```
 - **Failed Attempts Report**: View an aggregated list of failed login attempts, sorted by IP address, to easily identify persistent threats.
 
 ### Security Summaries

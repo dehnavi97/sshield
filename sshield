@@ -1,6 +1,32 @@
 #!/bin/bash
 # SSHield - A Linux Server Security Tool
 
+# --- TUI Color Theme ---
+export NEWT_COLORS='
+root=white,black
+border=black,lightgray
+window=white,lightgray
+shadow=black,gray
+title=black,lightgray
+button=white,green
+actbutton=black,white
+checkbox=black,lightgray
+actcheckbox=lightgray,green
+entry=black,lightgray
+disentry=gray,lightgray
+label=black,lightgray
+listbox=black,lightgray
+actlistbox=black,green
+sellistbox=lightgray,green
+actsellistbox=lightgray,green
+textbox=black,lightgray
+acttextbox=black,lightgray
+emptyscale=,gray
+fullscale=,green
+helpline=white,black
+roottext=black,lightgray
+'
+
 # --- Helper Functions ---
 
 # Function to check if a command exists

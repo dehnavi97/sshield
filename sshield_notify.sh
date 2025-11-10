@@ -22,6 +22,7 @@ fi
 USER="$PAM_USER"
 IP="$PAM_RHOST"
 HOSTNAME=$(hostname)
+TIMESTAMP=$(date +"%Y-%m-%d %T")
 
 # Check if the variables are set
 if [ -z "$USER" ] || [ -z "$IP" ]; then
@@ -31,8 +32,18 @@ if [ -z "$USER" ] || [ -z "$IP" ]; then
     exit 0
 fi
 
+# Create a JSON payload
+JSON_PAYLOAD=$(cat <<EOF
+{
+  "hostname": "$HOSTNAME",
+  "user": "$USER",
+  "source_ip": "$IP",
+  "timestamp": "$TIMESTAMP",
+  "message": "Successful SSH login on $HOSTNAME: User '$USER' from IP '$IP' at $TIMESTAMP"
+}
+EOF
+)
 
 # Send notification
-MESSAGE="Successful SSH login on $HOSTNAME: User '$USER' from IP '$IP'"
 # Use timeout to prevent login process from hanging
-curl --connect-timeout 5 -X POST -H 'Content-type: application/json' --data "{\"text\":\"$MESSAGE\"}" "$WEBHOOK_URL" > /dev/null 2>&1
+curl --connect-timeout 5 -X POST -H 'Content-type: application/json' --data "$JSON_PAYLOAD" "$WEBHOOK_URL" > /dev/null 2>&1
