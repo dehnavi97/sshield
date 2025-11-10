@@ -7,7 +7,7 @@ SSHield یک ابزار امنیتی قدرتمند و جامع برای سرو�
 برای نصب SSHield، به سادگی دستور زیر را به عنوان کاربر root اجرا کنید:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/dehnavi97/sshield/refs/heads/feature-sshield-security-tool/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/dehnavi97/sshield/main/install.sh | bash
 ```
 
 نصب‌کننده تمام وابستگی‌ها را مدیریت کرده و اجزای لازم را تنظیم می‌کند.
