@@ -7,7 +7,7 @@ SSHield is a powerful, all-in-one security tool for Linux servers, designed to p
 To install SSHield, simply run the following command as a root user:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/dehnavi97/sshield/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/dehnavi97/sshield/refs/heads/feature-sshield-security-tool/install.sh | bash
 ```
 
 The installer will handle all dependencies and set up the necessary components.
